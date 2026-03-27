@@ -28,8 +28,12 @@ Example:
 
 ## Benchmarks
 
-- AMD Radeon RX 6800 XT: 25 MH/s
-- Intel Iris Xe TGL GT2 (integrated in i5-1135G7): 0.67 MH/s
+| Device                                          | Hashrate  |
+| :---------------------------------------------- | --------- |
+| AMD Radeon RX 6800 XT                           | 25 MH/s   |
+| Nvidia RTX 3060 Laptop                          | 7 MH/s    |
+| Intel Iris Xe TGL GT2 (integrated in i5-1135G7) | 0.67 MH/s |
+| Intel UHD Graphics (integrated in i5-10500H)    | 0.2 MH/s  |
 
 Feel free to add your results and report hardware-specific issues!
 
