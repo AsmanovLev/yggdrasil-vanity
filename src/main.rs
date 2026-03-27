@@ -71,6 +71,10 @@ pub struct Args {
     /// 0.0 = only new records. Higher = also save near-records.
     #[arg(long, default_value_t = 0.0)]
     pub capture_range: f64,
+
+    /// Minimal height to consider (GPU-side filter).
+    #[arg(long, default_value_t = 0)]
+    pub minimal_height: u8,
 }
 
 fn main() {

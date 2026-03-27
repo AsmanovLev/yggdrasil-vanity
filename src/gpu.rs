@@ -43,7 +43,7 @@ struct Gpu {
 }
 
 impl Gpu {
-    pub fn new(opts: GpuOptions, mode: u32, fw: f32, lw: f32) -> Result<Gpu> {
+    pub fn new(opts: GpuOptions, mode: u32, fw: f32, lw: f32, mh: u8) -> Result<Gpu> {
         let mut prog_bldr = ProgramBuilder::new();
         prog_bldr
             .src(include_str!("../kernel/sha512.cl"))
@@ -106,7 +106,8 @@ impl Gpu {
                 .arg(mode)
                 .arg(fw)
                 .arg(lw)
-                .arg(0u64);
+                .arg(0u64)
+                .arg(mh);
             if let Some(lws) = opts.local_work_size {
                 kb.local_work_size(lws);
             }
@@ -159,6 +160,7 @@ pub fn run_opencl(args: &Args, csv_file: &Option<Mutex<fs::File>>, app_start: st
     };
     let fw = args.weight_h;
     let lw = args.weight_l;
+    let mh = args.minimal_height;
 
     let threads = args.threads;
 
@@ -172,6 +174,7 @@ pub fn run_opencl(args: &Args, csv_file: &Option<Mutex<fs::File>>, app_start: st
         mode,
         fw,
         lw,
+        mh,
     )
     .unwrap();
 

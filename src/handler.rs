@@ -19,7 +19,6 @@ pub fn compute_score(h: u8, l: u8, preset: &Preset, wh: f32, wl: f32) -> f64 {
     }
 }
 
-
 #[inline]
 pub fn score_to_fixed(score: f64) -> i64 {
     (score * SCORE_SCALE) as i64
@@ -109,11 +108,15 @@ pub fn handle_keypair(
     weight_h: f32,
     weight_l: f32,
     capture_range: f64,
+    minimal_height: u8,
     best_score: &Arc<AtomicI64>,
     csv_file: &Option<Mutex<fs::File>>,
     app_start: std::time::Instant,
 ) {
     let height = leading_zeros_of_pubkey(pk);
+    if height < minimal_height {
+        return;
+    }
     let subnet_str = subnet_string(pk, height);
     let length = subnet_str.len() as u8;
 

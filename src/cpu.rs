@@ -12,20 +12,16 @@ use rand::RngCore;
 use rayon::prelude::*;
 
 use crate::{
-    
     handler::{fixed_to_score, handle_keypair},
     Args,
 };
 
-pub fn run_cpu(
-    args: &Args,
-    csv_file: &Option<Mutex<fs::File>>,
-    app_start: std::time::Instant,
-) {
+pub fn run_cpu(args: &Args, csv_file: &Option<Mutex<fs::File>>, app_start: std::time::Instant) {
     let preset = &args.preset;
     let capture_range = args.capture_range;
     let wh = args.weight_h;
     let wl = args.weight_l;
+    let mh = args.minimal_height;
     let generated = Arc::new(AtomicU64::new(0));
     let best_score = Arc::new(AtomicI64::new(i64::MIN));
 
@@ -76,6 +72,7 @@ pub fn run_cpu(
                 wh,
                 wl,
                 capture_range,
+                mh,
                 &best_score,
                 csv_file,
                 app_start,

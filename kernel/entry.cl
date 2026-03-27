@@ -132,7 +132,8 @@ __kernel void generate_pubkey(
     uint             mode,
     float            weight_h,
     float            weight_l,
-    ulong            global_offset
+    ulong            global_offset,
+    uchar            minimal_height
 ) {
     size_t thread = get_global_id(0);
     ulong nonce = global_offset + thread;
@@ -172,6 +173,8 @@ __kernel void generate_pubkey(
 
     /* Score */
     uchar h = leading_zeros_pubkey(pubkey);
+    if (h < minimal_height) return;
+
     uchar l = subnet_length_approx(h, pubkey);
     long  score = compute_score(h, l, mode, weight_h, weight_l);
 
