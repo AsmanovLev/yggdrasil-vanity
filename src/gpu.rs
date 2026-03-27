@@ -18,9 +18,9 @@ use ocl::Result;
 use rand::RngCore;
 use rayon::prelude::*;
 
-use crate::Preset;
 use crate::handler::{fixed_to_score, handle_candidate};
 use crate::Args;
+use crate::Preset;
 
 const MAX_CANDIDATES: usize = 65536;
 const CANDIDATE_STRIDE: usize = 72; // seed[32] + pubkey[32] + score_i64[8]
@@ -37,6 +37,7 @@ struct GpuOptions {
 struct Gpu {
     kernel: ocl::Kernel,
     candidates: Buffer<u8>,
+    #[allow(dead_code)]
     base_seed: Buffer<u8>,
     threshold_buf: Buffer<u8>,
 }
@@ -149,11 +150,7 @@ fn score_threshold(best: i64, capture_range: f64) -> i64 {
     }
 }
 
-pub fn run_opencl(
-    args: &Args,
-    csv_file: &Option<Mutex<fs::File>>,
-    app_start: std::time::Instant,
-) {
+pub fn run_opencl(args: &Args, csv_file: &Option<Mutex<fs::File>>, app_start: std::time::Instant) {
     let capture_range = args.capture_range;
     let mode = match args.preset {
         Preset::Height => 0,
@@ -202,7 +199,7 @@ pub fn run_opencl(
         let threshold = score_threshold(best_score.load(Ordering::Relaxed), capture_range);
         gpu.write_threshold(threshold).unwrap();
         gpu.reset_counter().unwrap();
-        
+
         // Update GPU global_offset
         gpu.kernel.set_arg(6, global_offset).unwrap();
 
@@ -216,7 +213,7 @@ pub fn run_opencl(
             let payload_end = CANDIDATES_HEADER + count * CANDIDATE_STRIDE;
             let payload = candidate_buf[..payload_end].to_vec();
             let _ = cand_tx.send((payload, count));
-            
+
             if app_start.elapsed().as_secs() >= 10 {
                 lifetime_candidates += count as u64;
             }
@@ -297,6 +294,14 @@ fn process_candidates(
             let seed = &rec[0..32];
             let pk = &rec[32..64];
             let gpu_score = i64::from_le_bytes(rec[64..72].try_into().unwrap());
-            handle_candidate(seed, pk, gpu_score, best_score, csv_file, capture_range, app_start);
+            handle_candidate(
+                seed,
+                pk,
+                gpu_score,
+                best_score,
+                csv_file,
+                capture_range,
+                app_start,
+            );
         });
 }
