@@ -40,9 +40,13 @@ pub struct Args {
     #[arg(short, long, default_value_t = 0)]
     pub platform_idx: usize,
 
-    /// OpenCL device index
-    #[arg(short, long, default_value_t = 0)]
-    pub device_idx: usize,
+    /// OpenCL device indices (comma-separated, e.g., "0,1"), or "all".
+    #[arg(short, long, default_value = "all")]
+    pub device_idx: String,
+
+    /// List all available OpenCL devices and exit.
+    #[arg(long, default_value_t = false)]
+    pub list_devices: bool,
 
     /// Log hashrate every N seconds
     #[arg(short = 'i', long, default_value_t = 10)]
@@ -108,7 +112,7 @@ fn main_() {
 
     let app_start = std::time::Instant::now();
     if !args.disable_opencl {
-        run_opencl(&args, &csv_file, app_start)
+        run_opencl(args, csv_file, app_start)
     } else {
         run_cpu(&args, &csv_file, app_start)
     }

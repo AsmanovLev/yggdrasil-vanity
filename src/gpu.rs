@@ -151,137 +151,96 @@ fn score_threshold(best: i64, capture_range: f64) -> i64 {
     }
 }
 
-pub fn run_opencl(args: &Args, csv_file: &Option<Mutex<fs::File>>, app_start: std::time::Instant) {
-    let capture_range = args.capture_range;
+pub fn run_opencl(args: Args, csv_file: Option<Mutex<fs::File>>, app_start: std::time::Instant) {
+    let platforms = Platform::list();
+    let platform = platforms
+        .get(args.platform_idx)
+        .expect("Invalid platform index");
+    let all_devices = ocl::Device::list_all(platform).unwrap_or_default();
+
+    let device_indices = if args.device_idx == "all" {
+        (0..all_devices.len()).collect::<Vec<_>>()
+    } else {
+        args.device_idx
+            .split(',')
+            .map(|s| s.trim().parse::<usize>().expect("Invalid device index"))
+            .collect::<Vec<_>>()
+    };
+
+    let best_score = Arc::new(AtomicI64::new(i64::MIN));
+    let (cand_tx, cand_rx) = mpsc::sync_channel(device_indices.len() * 2);
+
+    let mut gpu_threads = Vec::new();
+    let args_arc = Arc::new(args);
+    for dev_idx in device_indices {
+        let args = args_arc.clone();
+        let best_score = best_score.clone();
+        let cand_tx = cand_tx.clone();
+        gpu_threads.push(thread::spawn(move || {
+            run_gpu_instance(&args, dev_idx, best_score, cand_tx, app_start);
+        }));
+    }
+    drop(cand_tx);
+
+    let csv_arc = Arc::new(csv_file);
+    let capture_range = args_arc.capture_range;
+    let cpu_thread = thread::spawn(move || {
+        for (buf, count) in cand_rx {
+            process_candidates(&buf, count, &best_score, &csv_arc, capture_range, app_start);
+        }
+    });
+
+    for t in gpu_threads {
+        t.join().unwrap();
+    }
+    cpu_thread.join().unwrap();
+}
+fn run_gpu_instance(
+    args: &Args,
+    device_idx: usize,
+    best_score: Arc<AtomicI64>,
+    cand_tx: mpsc::SyncSender<(Vec<u8>, usize)>,
+    app_start: std::time::Instant,
+) {
     let mode = match args.preset {
         Preset::Height => 0,
         Preset::Length => 1,
         Preset::HeightLength => 2,
     };
-    let fw = args.weight_h;
-    let lw = args.weight_l;
-    let mh = args.minimal_height;
-
-    let threads = args.threads;
-
     let mut gpu = Gpu::new(
         GpuOptions {
             platform_idx: args.platform_idx,
-            device_idx: args.device_idx,
-            threads,
+            device_idx: device_idx,
+            threads: args.threads,
             local_work_size: args.local_work_size,
         },
         mode,
-        fw,
-        lw,
-        mh,
+        args.weight_h,
+        args.weight_l,
+        args.minimal_height,
     )
     .unwrap();
 
-    let best_score = Arc::new(AtomicI64::new(i64::MIN));
-    let (cand_tx, cand_rx) = mpsc::sync_channel::<(Vec<u8>, usize)>(1);
-
-    let _cpu_thread = {
-        let best_score = best_score.clone();
-        let csv_ptr: usize = csv_file as *const Option<Mutex<fs::File>> as usize;
-        thread::spawn(move || {
-            let csv = unsafe { &*(csv_ptr as *const Option<Mutex<fs::File>>) };
-            for (buf, count) in cand_rx {
-                process_candidates(&buf, count, &best_score, csv, capture_range, app_start);
-            }
-        })
-    };
-
-    let mut iters = 0u64;
     let mut global_offset = 0u64;
-    let mut lifetime_candidates = 0u64;
-    let mut stats_start: Option<time::Instant> = None;
-    let mut start = time::Instant::now();
-
     loop {
-        let threshold = score_threshold(best_score.load(Ordering::Relaxed), capture_range);
+        let threshold = score_threshold(best_score.load(Ordering::Relaxed), args.capture_range);
         gpu.write_threshold(threshold).unwrap();
         gpu.reset_counter().unwrap();
-
-        // Update GPU global_offset
         gpu.kernel.set_arg(6, global_offset).unwrap();
-
-        // Dispatch
         gpu.compute().unwrap();
 
         let mut candidate_buf = Vec::with_capacity(CANDIDATES_BUF_BYTES);
-        let count = gpu.read_candidates(&mut candidate_buf).unwrap();
-
-        if count > 0 {
-            let payload_end = CANDIDATES_HEADER + count * CANDIDATE_STRIDE;
-            let payload = candidate_buf[..payload_end].to_vec();
-            let _ = cand_tx.send((payload, count));
-
-            if app_start.elapsed().as_secs() >= 10 {
-                lifetime_candidates += count as u64;
+        if let Ok(count) = gpu.read_candidates(&mut candidate_buf) {
+            if count > 0 {
+                let _ = cand_tx.send((
+                    candidate_buf[..CANDIDATES_HEADER + count * CANDIDATE_STRIDE].to_vec(),
+                    count,
+                ));
             }
         }
-
-        global_offset += threads as u64;
-        iters += threads as u64;
-
-        let elapsed = start.elapsed();
-        if elapsed.as_secs() >= args.log_interval {
-            if app_start.elapsed().as_secs() >= 10 && stats_start.is_none() {
-                stats_start = Some(time::Instant::now());
-            }
-
-            let hashrate = iters as f64 / elapsed.as_secs_f64() / 1_000_000.0;
-            let best_raw = best_score.load(Ordering::Relaxed);
-            let best_display = if best_raw == i64::MIN {
-                "none".to_string()
-            } else {
-                format!("{:.6}", fixed_to_score(best_raw))
-            };
-
-            let (cands_per_hour, eta_str) = if let Some(st) = stats_start {
-                let active_secs = st.elapsed().as_secs_f64();
-                if active_secs > 0.0 && lifetime_candidates > 0 {
-                    let cps = lifetime_candidates as f64 / active_secs;
-                    let cph = cps * 3600.0;
-                    let eta_secs = 1.0 / cps;
-                    let eta_s = if eta_secs > 86400.0 {
-                        format!("{:.1}d", eta_secs / 86400.0)
-                    } else if eta_secs > 3600.0 {
-                        format!("{:.1}h", eta_secs / 3600.0)
-                    } else if eta_secs > 60.0 {
-                        format!("{:.1}m", eta_secs / 60.0)
-                    } else {
-                        format!("{:.0}s", eta_secs)
-                    };
-                    (cph, eta_s)
-                } else {
-                    (0.0, "N/A".to_string())
-                }
-            } else {
-                (0.0, "Calibrating...".to_string())
-            };
-
-            eprintln!(
-                "{} Hashrate: {:.2} MH/s  BestScore: {}  Candidates/h: {:.5}  ETA: {}",
-                Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-                hashrate,
-                best_display,
-                cands_per_hour,
-                eta_str
-            );
-            start = time::Instant::now();
-            iters = 0;
-        }
-    }
-
-    #[allow(unreachable_code)]
-    {
-        drop(cand_tx);
-        _cpu_thread.join().unwrap();
+        global_offset += args.threads as u64;
     }
 }
-
 fn process_candidates(
     buf: &[u8],
     count: usize,
